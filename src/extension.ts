@@ -9,12 +9,15 @@ import { ModelManager } from './models/modelManager';
 import { VectorDatabaseManager } from './vectordb/vectorDatabaseManager';
 import { WorkflowStorageManager } from './storage/workflowStorageManager';
 import { ExtensionManager } from './extensions/extensionManager';
+import { ExecutionHistoryProvider } from './ui/executionHistoryProvider';
+import { VectorDatabasePanel } from './ui/vectorDatabasePanel';
 
 let workflowEngine: WorkflowEngine;
 let modelManager: ModelManager;
 let vectorDbManager: VectorDatabaseManager;
 let storageManager: WorkflowStorageManager;
 let extensionManager: ExtensionManager;
+let executionHistoryProvider: ExecutionHistoryProvider;
 
 /**
  * Workflow tree item
@@ -151,8 +154,12 @@ export async function activate(context: vscode.ExtensionContext) {
         workflowEngine = new WorkflowEngine(
             modelManager,
             vectorDbManager,
-            extensionManager
+            extensionManager,
+            storageManager
         );
+
+        // Initialize execution history provider
+        executionHistoryProvider = new ExecutionHistoryProvider(context);
 
         // Initialize managers
         await modelManager.initialize();
@@ -312,17 +319,28 @@ function registerCommands(context: vscode.ExtensionContext) {
                     async (progress, token) => {
                         const result = await workflowEngine.executeWorkflow(workflow, {}, token);
                         
+                        // Add to execution history
+                        executionHistoryProvider.addExecution({
+                            executionId: result.executionId,
+                            workflowName: workflow.name,
+                            workflowId: workflow.id,
+                            status: result.status,
+                            timestamp: result.startTime,
+                            duration: result.duration,
+                            nodeResults: result.nodeResults
+                        });
+                        
                         if (result.status === 'success') {
                             vscode.window.showInformationMessage(
-                                `Workflow "${workflow.name}" completed successfully`
+                                `Workflow "${workflow.name}" completed successfully in ${(result.duration / 1000).toFixed(2)}s`
                             );
                         } else if (result.status === 'failed') {
                             vscode.window.showErrorMessage(
-                                `Workflow "${workflow.name}" failed`
+                                `Workflow "${workflow.name}" failed after ${(result.duration / 1000).toFixed(2)}s`
                             );
                         } else {
                             vscode.window.showWarningMessage(
-                                `Workflow "${workflow.name}" completed partially`
+                                `Workflow "${workflow.name}" completed partially in ${(result.duration / 1000).toFixed(2)}s`
                             );
                         }
 
@@ -339,6 +357,47 @@ function registerCommands(context: vscode.ExtensionContext) {
                     `Failed to execute workflow: ${error instanceof Error ? error.message : String(error)}`
                 );
             }
+        })
+    );
+
+    // View execution result
+    context.subscriptions.push(
+        vscode.commands.registerCommand('agenticWorkflow.viewExecutionResult', async (record: any) => {
+            try {
+                const doc = await vscode.workspace.openTextDocument({
+                    content: JSON.stringify(record, null, 2),
+                    language: 'json',
+                });
+                await vscode.window.showTextDocument(doc);
+            } catch (error) {
+                vscode.window.showErrorMessage(
+                    `Failed to view execution result: ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
+        })
+    );
+
+    // Clear execution history
+    context.subscriptions.push(
+        vscode.commands.registerCommand('agenticWorkflow.clearExecutionHistory', async () => {
+            const confirm = await vscode.window.showWarningMessage(
+                'Clear all execution history?',
+                { modal: true },
+                'Yes',
+                'No'
+            );
+
+            if (confirm === 'Yes') {
+                executionHistoryProvider.clearHistory();
+                vscode.window.showInformationMessage('Execution history cleared');
+            }
+        })
+    );
+
+    // Open Vector Database Panel
+    context.subscriptions.push(
+        vscode.commands.registerCommand('agenticWorkflow.openVectorDbPanel', () => {
+            VectorDatabasePanel.createOrShow(context, vectorDbManager);
         })
     );
 
@@ -473,6 +532,12 @@ function registerTreeViews(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(modelExplorer);
 
+    // Execution history tree view
+    const executionHistoryView = vscode.window.createTreeView('executionHistory', {
+        treeDataProvider: executionHistoryProvider,
+    });
+    context.subscriptions.push(executionHistoryView);
+
     // Refresh tree views when needed
     context.subscriptions.push(
         vscode.commands.registerCommand('agenticWorkflow.refreshWorkflows', () => {
@@ -483,6 +548,12 @@ function registerTreeViews(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('agenticWorkflow.refreshModels', () => {
             modelTreeDataProvider.refresh();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('agenticWorkflow.refreshExecutionHistory', () => {
+            executionHistoryProvider.refresh();
         })
     );
 }
