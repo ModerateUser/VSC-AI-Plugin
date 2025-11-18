@@ -19,6 +19,7 @@ import {
 import { ModelManager } from '../models/modelManager';
 import { VectorDatabaseManager } from '../vectordb/vectorDatabaseManager';
 import { ExtensionManager } from '../extensions/extensionManager';
+import { WorkflowStorageManager } from '../storage/workflowStorageManager';
 import { NodeExecutor } from './nodeExecutor';
 
 /**
@@ -28,17 +29,43 @@ export class WorkflowEngine {
     private executionEvents = new Subject<ExecutionEvent>();
     private nodeExecutor: NodeExecutor;
     private activeExecutions = new Map<string, AbortController>();
+    private currentWorkflow?: WorkflowDefinition; // Track current workflow for node lookup
 
     constructor(
         private modelManager: ModelManager,
         private vectorDbManager: VectorDatabaseManager,
-        private extensionManager: ExtensionManager
+        private extensionManager: ExtensionManager,
+        private storageManager?: WorkflowStorageManager
     ) {
         this.nodeExecutor = new NodeExecutor(
             modelManager,
             vectorDbManager,
             extensionManager
         );
+        
+        // Wire up the node executor with references it needs
+        this.nodeExecutor.setWorkflowEngine(this);
+        if (storageManager) {
+            this.nodeExecutor.setStorageManager(storageManager);
+        }
+    }
+
+    /**
+     * Set storage manager (can be set after construction)
+     */
+    setStorageManager(storageManager: WorkflowStorageManager): void {
+        this.storageManager = storageManager;
+        this.nodeExecutor.setStorageManager(storageManager);
+    }
+
+    /**
+     * Get node by ID from current workflow
+     */
+    getNodeById(nodeId: string): NodeConfig | undefined {
+        if (!this.currentWorkflow) {
+            return undefined;
+        }
+        return this.currentWorkflow.nodes.find(n => n.id === nodeId);
     }
 
     /**
@@ -51,6 +78,9 @@ export class WorkflowEngine {
     ): Promise<WorkflowExecutionResult> {
         const executionId = uuidv4();
         const startTime = new Date();
+
+        // Set current workflow for node lookup
+        this.currentWorkflow = workflow;
 
         // Create execution context
         const context: WorkflowContext = {
@@ -157,6 +187,7 @@ export class WorkflowEngine {
             });
         } finally {
             this.activeExecutions.delete(executionId);
+            this.currentWorkflow = undefined; // Clear current workflow
         }
 
         const endTime = new Date();
