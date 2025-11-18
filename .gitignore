@@ -1,0 +1,71 @@
+# Compiled output
+out/
+dist/
+*.vsix
+
+# Node modules
+node_modules/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# VS Code
+.vscode-test/
+.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Model cache
+models/
+*.model
+*.bin
+*.safetensors
+
+# Vector database
+vectordb/
+*.index
+*.faiss
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.js.map
