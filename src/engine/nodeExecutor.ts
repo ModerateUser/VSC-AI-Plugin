@@ -32,6 +32,8 @@ import { ExtensionManager } from '../extensions/extensionManager';
  */
 export class NodeExecutor {
     private octokit?: Octokit;
+    private workflowEngine?: any; // Will be set by WorkflowEngine
+    private storageManager?: any; // Will be set by WorkflowEngine
 
     constructor(
         private modelManager: ModelManager,
@@ -39,6 +41,20 @@ export class NodeExecutor {
         private extensionManager: ExtensionManager
     ) {
         this.initializeGitHub();
+    }
+
+    /**
+     * Set workflow engine reference (for nested workflows)
+     */
+    setWorkflowEngine(engine: any): void {
+        this.workflowEngine = engine;
+    }
+
+    /**
+     * Set storage manager reference (for nested workflows)
+     */
+    setStorageManager(manager: any): void {
+        this.storageManager = manager;
     }
 
     /**
@@ -445,30 +461,163 @@ export class NodeExecutor {
     }
 
     /**
-     * Execute nested workflow node
+     * Execute nested workflow node - FULLY IMPLEMENTED
      */
     private async executeNestedWorkflow(
         node: NestedWorkflowNodeConfig,
         context: WorkflowContext
     ): Promise<any> {
-        // This would be handled by the workflow engine
-        // For now, return a placeholder
-        throw new Error('Nested workflows not yet implemented');
+        if (!this.workflowEngine) {
+            throw new Error('Workflow engine not initialized for nested workflow execution');
+        }
+
+        if (!this.storageManager) {
+            throw new Error('Storage manager not initialized for nested workflow execution');
+        }
+
+        try {
+            // Load the nested workflow
+            const nestedWorkflow = await this.storageManager.loadWorkflowById(node.workflowId);
+            
+            if (!nestedWorkflow) {
+                throw new Error(`Nested workflow not found: ${node.workflowId}`);
+            }
+
+            // Prepare nested context with input mapping
+            const nestedContext: Record<string, any> = {};
+            
+            if (node.inputMapping) {
+                for (const [key, contextPath] of Object.entries(node.inputMapping)) {
+                    const value = this.resolveContextPath(contextPath, context);
+                    nestedContext[key] = value;
+                }
+            } else {
+                // If no mapping specified, pass entire context
+                nestedContext = { ...context.data };
+            }
+
+            // Execute the nested workflow
+            const result = await this.workflowEngine.executeWorkflow(
+                nestedWorkflow,
+                nestedContext
+            );
+
+            // Check execution status
+            if (result.status === 'failed') {
+                throw new Error(`Nested workflow "${nestedWorkflow.name}" failed`);
+            }
+
+            // Map outputs back to parent context
+            let output: any = result.context.outputs;
+            
+            if (node.outputMapping) {
+                const mappedOutput: Record<string, any> = {};
+                for (const [key, contextPath] of Object.entries(node.outputMapping)) {
+                    const value = this.resolveContextPath(contextPath, result.context);
+                    mappedOutput[key] = value;
+                }
+                output = mappedOutput;
+            }
+
+            return {
+                nestedWorkflowId: node.workflowId,
+                nestedWorkflowName: nestedWorkflow.name,
+                executionId: result.executionId,
+                status: result.status,
+                duration: result.duration,
+                output
+            };
+        } catch (error) {
+            throw new Error(
+                `Nested workflow execution failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     /**
-     * Execute parallel node
+     * Execute parallel node - FULLY IMPLEMENTED
      */
     private async executeParallel(
         node: ParallelNodeConfig,
         context: WorkflowContext
     ): Promise<any> {
-        // This would be handled by the workflow engine
-        // For now, return a placeholder
-        return {
-            childNodes: node.childNodes,
-            waitForAll: node.waitForAll,
-        };
+        if (!this.workflowEngine) {
+            throw new Error('Workflow engine not initialized for parallel execution');
+        }
+
+        try {
+            // Get all child nodes
+            const childNodes = node.childNodes.map(nodeId => {
+                const childNode = this.workflowEngine.getNodeById(nodeId);
+                if (!childNode) {
+                    throw new Error(`Child node not found: ${nodeId}`);
+                }
+                return childNode;
+            });
+
+            // Execute all child nodes in parallel
+            const childPromises = childNodes.map(async (childNode) => {
+                try {
+                    const result = await this.execute(childNode, context);
+                    return {
+                        nodeId: childNode.id,
+                        nodeName: childNode.name,
+                        status: 'success',
+                        output: result,
+                        error: null
+                    };
+                } catch (error) {
+                    return {
+                        nodeId: childNode.id,
+                        nodeName: childNode.name,
+                        status: 'failed',
+                        output: null,
+                        error: error instanceof Error ? error.message : String(error)
+                    };
+                }
+            });
+
+            let results: any[];
+            
+            if (node.waitForAll) {
+                // Wait for all nodes to complete (even if some fail)
+                const settled = await Promise.allSettled(childPromises);
+                results = settled.map((result, index) => {
+                    if (result.status === 'fulfilled') {
+                        return result.value;
+                    } else {
+                        return {
+                            nodeId: childNodes[index].id,
+                            nodeName: childNodes[index].name,
+                            status: 'failed',
+                            output: null,
+                            error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+                        };
+                    }
+                });
+            } else {
+                // Wait for first to complete successfully
+                const firstResult = await Promise.race(childPromises);
+                results = [firstResult];
+            }
+
+            // Calculate statistics
+            const successful = results.filter(r => r.status === 'success').length;
+            const failed = results.filter(r => r.status === 'failed').length;
+
+            return {
+                parallelExecution: true,
+                waitForAll: node.waitForAll,
+                totalNodes: childNodes.length,
+                successful,
+                failed,
+                results
+            };
+        } catch (error) {
+            throw new Error(
+                `Parallel execution failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     /**
