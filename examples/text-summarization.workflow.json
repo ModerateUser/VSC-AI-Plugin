@@ -1,0 +1,81 @@
+{
+  "id": "text-summarization-example",
+  "name": "Text Summarization Pipeline",
+  "version": "1.0.0",
+  "description": "Download a summarization model from Hugging Face and use it to summarize text documents",
+  "nodes": [
+    {
+      "id": "download-model",
+      "name": "Download BART Summarization Model",
+      "type": "DOWNLOAD",
+      "dependencies": [],
+      "source": "huggingface",
+      "resourceId": "facebook/bart-large-cnn",
+      "version": "main",
+      "retryPolicy": {
+        "maxAttempts": 3,
+        "initialDelay": 2000,
+        "backoff": "exponential"
+      },
+      "timeout": 600000
+    },
+    {
+      "id": "prepare-text",
+      "name": "Prepare Input Text",
+      "type": "CONTEXT_INJECTION",
+      "dependencies": ["download-model"],
+      "injections": {
+        "inputText": "Artificial intelligence (AI) is intelligence demonstrated by machines, as opposed to natural intelligence displayed by animals including humans. AI research has been defined as the field of study of intelligent agents, which refers to any system that perceives its environment and takes actions that maximize its chance of achieving its goals. The term artificial intelligence had previously been used to describe machines that mimic and display human cognitive skills that are associated with the human mind, such as learning and problem-solving. This definition has since been rejected by major AI researchers who now describe AI in terms of rationality and acting rationally, which does not limit how intelligence can be articulated."
+      },
+      "merge": true
+    },
+    {
+      "id": "summarize-text",
+      "name": "Generate Summary",
+      "type": "MODEL",
+      "dependencies": ["prepare-text"],
+      "modelId": "facebook/bart-large-cnn",
+      "inputMapping": {
+        "text": "data.inputText"
+      },
+      "outputMapping": {
+        "summary_text": "outputs.summary"
+      },
+      "inferenceParams": {
+        "max_length": 130,
+        "min_length": 30,
+        "do_sample": false
+      },
+      "retryPolicy": {
+        "maxAttempts": 2,
+        "initialDelay": 1000,
+        "backoff": "linear"
+      },
+      "timeout": 30000
+    },
+    {
+      "id": "save-result",
+      "name": "Save Summary to File",
+      "type": "SCRIPT",
+      "dependencies": ["summarize-text"],
+      "language": "javascript",
+      "script": "const fs = require('fs'); const summary = inputs.summary; fs.writeFileSync('summary.txt', summary); return { saved: true, path: 'summary.txt' };",
+      "inputMapping": {
+        "summary": "outputs.summarize-text.summary"
+      },
+      "outputMapping": {
+        "saved": "outputs.fileSaved",
+        "path": "outputs.filePath"
+      }
+    }
+  ],
+  "entryNodes": ["download-model"],
+  "metadata": {
+    "author": "Agentic Workflow Team",
+    "category": "NLP",
+    "tags": ["summarization", "text-processing", "huggingface"],
+    "estimatedDuration": "2-5 minutes"
+  },
+  "createdAt": "2025-11-18T00:00:00.000Z",
+  "updatedAt": "2025-11-18T00:00:00.000Z"
+}
