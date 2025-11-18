@@ -1,0 +1,129 @@
+{
+  "id": "semantic-search-qa-example",
+  "name": "Semantic Search & Question Answering",
+  "version": "1.0.0",
+  "description": "Create a vector database from documents, perform semantic search, and answer questions using retrieved context",
+  "nodes": [
+    {
+      "id": "fetch-documents",
+      "name": "Fetch Documentation from API",
+      "type": "API_CALL",
+      "dependencies": [],
+      "method": "GET",
+      "url": "https://api.example.com/docs",
+      "headers": {
+        "Accept": "application/json"
+      },
+      "outputMapping": {
+        "documents": "data.docs"
+      },
+      "retryPolicy": {
+        "maxAttempts": 3,
+        "initialDelay": 1000,
+        "backoff": "exponential"
+      }
+    },
+    {
+      "id": "create-vector-index",
+      "name": "Generate Vector Embeddings",
+      "type": "VECTOR_GENERATION",
+      "dependencies": ["fetch-documents"],
+      "indexName": "documentation-index",
+      "dataSource": "data.docs",
+      "embeddingModel": "sentence-transformers/all-MiniLM-L6-v2",
+      "chunkSize": 512,
+      "overlap": 50,
+      "timeout": 120000
+    },
+    {
+      "id": "prepare-query",
+      "name": "Prepare User Query",
+      "type": "CONTEXT_INJECTION",
+      "dependencies": ["create-vector-index"],
+      "injections": {
+        "userQuery": "How do I configure authentication in the API?"
+      },
+      "merge": true
+    },
+    {
+      "id": "semantic-search",
+      "name": "Search Relevant Documents",
+      "type": "SCRIPT",
+      "dependencies": ["prepare-query"],
+      "language": "javascript",
+      "script": "const vectorDb = require('./vectorDatabaseManager'); const results = await vectorDb.search('documentation-index', inputs.query, 5); return { results };",
+      "inputMapping": {
+        "query": "data.userQuery"
+      },
+      "outputMapping": {
+        "results": "data.searchResults"
+      }
+    },
+    {
+      "id": "download-qa-model",
+      "name": "Download Q&A Model",
+      "type": "DOWNLOAD",
+      "dependencies": [],
+      "source": "huggingface",
+      "resourceId": "deepset/roberta-base-squad2",
+      "version": "main",
+      "timeout": 600000
+    },
+    {
+      "id": "answer-question",
+      "name": "Generate Answer from Context",
+      "type": "MODEL",
+      "dependencies": ["semantic-search", "download-qa-model"],
+      "modelId": "deepset/roberta-base-squad2",
+      "inputMapping": {
+        "question": "data.userQuery",
+        "context": "data.searchResults[0].content"
+      },
+      "outputMapping": {
+        "answer": "outputs.answer",
+        "score": "outputs.confidence"
+      },
+      "inferenceParams": {
+        "top_k": 1
+      }
+    },
+    {
+      "id": "format-response",
+      "name": "Format Final Response",
+      "type": "SCRIPT",
+      "dependencies": ["answer-question"],
+      "language": "javascript",
+      "script": "const response = { question: inputs.question, answer: inputs.answer, confidence: inputs.score, sources: inputs.sources.map(s => ({ id: s.id, score: s.score })) }; return response;",
+      "inputMapping": {
+        "question": "data.userQuery",
+        "answer": "outputs.answer-question.answer",
+        "score": "outputs.answer-question.confidence",
+        "sources": "data.searchResults"
+      },
+      "outputMapping": {
+        "response": "outputs.finalResponse"
+      }
+    },
+    {
+      "id": "log-result",
+      "name": "Log Result to Console",
+      "type": "SCRIPT",
+      "dependencies": ["format-response"],
+      "language": "javascript",
+      "script": "console.log('Q&A Result:', JSON.stringify(inputs.response, null, 2)); return { logged: true };",
+      "inputMapping": {
+        "response": "outputs.format-response.response"
+      }
+    }
+  ],
+  "entryNodes": ["fetch-documents", "download-qa-model"],
+  "metadata": {
+    "author": "Agentic Workflow Team",
+    "category": "NLP",
+    "tags": ["semantic-search", "question-answering", "vector-database", "rag"],
+    "estimatedDuration": "3-7 minutes",
+    "description": "Demonstrates RAG (Retrieval-Augmented Generation) pattern with vector search and Q&A"
+  },
+  "createdAt": "2025-11-18T00:00:00.000Z",
+  "updatedAt": "2025-11-18T00:00:00.000Z"
+}
