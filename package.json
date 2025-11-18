@@ -2,7 +2,7 @@
   "name": "vscode-agentic-workflow",
   "displayName": "Agentic Workflow Plugin",
   "description": "Visual node-based workflow engine for VS Code with AI model management, automation, and vector database support",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ModerateUser",
   "engines": {
     "vscode": "^1.85.0"
