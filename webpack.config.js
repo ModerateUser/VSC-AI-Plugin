@@ -7,10 +7,16 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: 'extension.js',
-    libraryTarget: 'commonjs2'
+    libraryTarget: 'commonjs2',
+    devtoolModuleFilenameTemplate: '../[resource-path]'
   },
+  devtool: 'nosources-source-map',
   externals: {
-    vscode: 'commonjs vscode'
+    vscode: 'commonjs vscode',
+    'node-fetch': 'commonjs node-fetch',
+    '@octokit/rest': 'commonjs @octokit/rest',
+    '@huggingface/inference': 'commonjs @huggingface/inference',
+    'faiss-node': 'commonjs faiss-node'
   },
   resolve: {
     extensions: ['.ts', '.js']
@@ -27,9 +33,5 @@ module.exports = {
         ]
       }
     ]
-  },
-  devtool: 'nosources-source-map',
-  infrastructureLogging: {
-    level: "log"
   }
 };
