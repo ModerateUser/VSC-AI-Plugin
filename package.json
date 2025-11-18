@@ -76,6 +76,24 @@
         }
       ]
     },
+    "customEditors": [
+      {
+        "viewType": "agenticWorkflow.editor",
+        "displayName": "Workflow Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.workflow.json"
+          },
+          {
+            "filenamePattern": "*.workflow.yaml"
+          },
+          {
+            "filenamePattern": "*.workflow.yml"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
     "configuration": {
       "title": "Agentic Workflow",
       "properties": {
@@ -121,13 +139,15 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "jest",
-    "build:webview": "cd webview && npm run build"
+    "test": "jest"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
     "@types/jest": "^29.5.11",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "20.x",
+    "@types/node-fetch": "^2.6.9",
+    "@types/uuid": "^9.0.7",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
@@ -145,7 +165,6 @@
   "dependencies": {
     "@huggingface/inference": "^2.6.4",
     "@octokit/rest": "^20.0.2",
-    "async-retry": "^1.3.3",
     "axios": "^1.6.5",
     "faiss-node": "^0.5.1",
     "immer": "^10.0.3",
