@@ -13,7 +13,100 @@ import { WorkflowDefinition, WorkflowExport } from '../types/workflow';
  * Workflow Storage Manager
  */
 export class WorkflowStorageManager {
+    // Workflow cache for performance optimization
+    private workflowCache = new Map<string, { workflow: WorkflowDefinition; uri: vscode.Uri; lastModified: number }>();
+    private cacheInitialized = false;
+
     constructor(private context: vscode.ExtensionContext) {}
+
+    /**
+     * Initialize workflow cache
+     */
+    private async initializeCache(): Promise<void> {
+        if (this.cacheInitialized) {
+            return;
+        }
+
+        const workflows = await this.listWorkflows();
+        for (const workflowInfo of workflows) {
+            try {
+                const workflow = await this.loadWorkflow(workflowInfo.uri);
+                const stat = await vscode.workspace.fs.stat(workflowInfo.uri);
+                this.workflowCache.set(workflow.id, {
+                    workflow,
+                    uri: workflowInfo.uri,
+                    lastModified: stat.mtime
+                });
+            } catch (error) {
+                console.error(`Failed to cache workflow ${workflowInfo.uri.fsPath}:`, error);
+            }
+        }
+
+        this.cacheInitialized = true;
+    }
+
+    /**
+     * Refresh workflow cache
+     */
+    async refreshCache(): Promise<void> {
+        this.workflowCache.clear();
+        this.cacheInitialized = false;
+        await this.initializeCache();
+    }
+
+    /**
+     * Load workflow by ID (with caching)
+     * CRITICAL: Required for nested workflow execution
+     */
+    async loadWorkflowById(workflowId: string): Promise<WorkflowDefinition | null> {
+        // Initialize cache if needed
+        await this.initializeCache();
+
+        // Check cache first
+        const cached = this.workflowCache.get(workflowId);
+        if (cached) {
+            // Verify file hasn't been modified
+            try {
+                const stat = await vscode.workspace.fs.stat(cached.uri);
+                if (stat.mtime === cached.lastModified) {
+                    return cached.workflow;
+                }
+                // File modified, reload
+                const workflow = await this.loadWorkflow(cached.uri);
+                this.workflowCache.set(workflowId, {
+                    workflow,
+                    uri: cached.uri,
+                    lastModified: stat.mtime
+                });
+                return workflow;
+            } catch (error) {
+                // File deleted or inaccessible, remove from cache
+                this.workflowCache.delete(workflowId);
+            }
+        }
+
+        // Not in cache, search all workflows
+        const workflows = await this.listWorkflows();
+        for (const workflowInfo of workflows) {
+            try {
+                const workflow = await this.loadWorkflow(workflowInfo.uri);
+                if (workflow.id === workflowId) {
+                    // Add to cache
+                    const stat = await vscode.workspace.fs.stat(workflowInfo.uri);
+                    this.workflowCache.set(workflowId, {
+                        workflow,
+                        uri: workflowInfo.uri,
+                        lastModified: stat.mtime
+                    });
+                    return workflow;
+                }
+            } catch (error) {
+                console.error(`Failed to load workflow ${workflowInfo.uri.fsPath}:`, error);
+            }
+        }
+
+        return null;
+    }
 
     /**
      * Create a new workflow
@@ -78,6 +171,14 @@ export class WorkflowStorageManager {
             }
 
             await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf-8'));
+
+            // Update cache
+            const stat = await vscode.workspace.fs.stat(uri);
+            this.workflowCache.set(workflow.id, {
+                workflow,
+                uri,
+                lastModified: stat.mtime
+            });
         } catch (error) {
             throw new Error(`Failed to save workflow: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -93,6 +194,9 @@ export class WorkflowStorageManager {
         workflow.id = uuidv4();
         workflow.createdAt = new Date();
         workflow.updatedAt = new Date();
+
+        // Invalidate cache since we have a new workflow
+        this.cacheInitialized = false;
 
         return workflow;
     }
