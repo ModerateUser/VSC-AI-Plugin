@@ -126,6 +126,38 @@
           "type": "boolean",
           "default": true,
           "description": "Enable automatic vector database generation"
+        },
+        "agenticWorkflow.enableGPU": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable GPU acceleration for AI models (requires CUDA/ROCm/Metal)"
+        },
+        "agenticWorkflow.gpuDevice": {
+          "type": "number",
+          "default": 0,
+          "description": "GPU device ID to use (0 = first GPU, -1 = CPU only)"
+        },
+        "agenticWorkflow.gpuMemoryLimit": {
+          "type": "number",
+          "default": 0,
+          "description": "GPU memory limit in GB (0 = no limit)"
+        },
+        "agenticWorkflow.gpuBatchSize": {
+          "type": "number",
+          "default": 32,
+          "description": "Batch size for GPU inference (higher = faster but more memory)"
+        },
+        "agenticWorkflow.enableMixedPrecision": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use FP16 mixed precision for faster inference (requires GPU)"
+        },
+        "agenticWorkflow.gpuMemoryFraction": {
+          "type": "number",
+          "default": 0.9,
+          "minimum": 0.1,
+          "maximum": 1.0,
+          "description": "Fraction of GPU memory to use (0.1-1.0)"
         }
       }
     }
