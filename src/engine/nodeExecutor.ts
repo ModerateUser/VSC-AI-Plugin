@@ -69,9 +69,25 @@ export class NodeExecutor {
     }
 
     /**
+     * Clone context for isolated execution (prevents race conditions)
+     */
+    private cloneContext(context: WorkflowContext): WorkflowContext {
+        return {
+            ...context,
+            data: JSON.parse(JSON.stringify(context.data)),
+            variables: JSON.parse(JSON.stringify(context.variables)),
+            outputs: JSON.parse(JSON.stringify(context.outputs)),
+            metadata: { ...context.metadata }
+        };
+    }
+
+    /**
      * Execute a node based on its type
      */
     async execute(node: NodeConfig, context: WorkflowContext): Promise<any> {
+        // Validate node configuration
+        this.validateNodeConfig(node);
+
         switch (node.type) {
             case NodeType.CONDITION:
                 return this.executeCondition(node as ConditionNodeConfig, context);
@@ -100,65 +116,177 @@ export class NodeExecutor {
             case NodeType.CUSTOM:
                 return this.executeCustom(node, context);
             default:
-                throw new Error(`Unknown node type: ${node.type}`);
+                throw new Error(`Unknown node type: ${node.type} (node: ${node.id})`);
         }
     }
 
     /**
-     * Execute condition node
+     * Validate node configuration before execution
+     */
+    private validateNodeConfig(node: NodeConfig): void {
+        if (!node.id) {
+            throw new Error('Node must have an id');
+        }
+        if (!node.type) {
+            throw new Error(`Node ${node.id} must have a type`);
+        }
+        if (!node.name) {
+            throw new Error(`Node ${node.id} must have a name`);
+        }
+
+        // Type-specific validation
+        switch (node.type) {
+            case NodeType.MODEL:
+                const modelNode = node as ModelNodeConfig;
+                if (!modelNode.modelId && !modelNode.modelTags) {
+                    throw new Error(`Model node ${node.id} must specify modelId or modelTags`);
+                }
+                break;
+            case NodeType.API_CALL:
+                const apiNode = node as ApiCallNodeConfig;
+                if (!apiNode.url) {
+                    throw new Error(`API call node ${node.id} must have a url`);
+                }
+                break;
+            case NodeType.SCRIPT:
+                const scriptNode = node as ScriptNodeConfig;
+                if (!scriptNode.script) {
+                    throw new Error(`Script node ${node.id} must have script content`);
+                }
+                break;
+            case NodeType.NESTED_WORKFLOW:
+                const nestedNode = node as NestedWorkflowNodeConfig;
+                if (!nestedNode.workflowId) {
+                    throw new Error(`Nested workflow node ${node.id} must have a workflowId`);
+                }
+                break;
+        }
+    }
+
+    /**
+     * Execute condition node - COMPLETE IMPLEMENTATION
      */
     private async executeCondition(
         node: ConditionNodeConfig,
         context: WorkflowContext
     ): Promise<any> {
+        if (!this.workflowEngine) {
+            throw new Error(`Workflow engine not initialized for condition node ${node.id}`);
+        }
+
         // Evaluate condition expression
-        const result = this.evaluateExpression(node.condition, context);
+        const conditionResult = this.evaluateExpression(node.condition, context);
+        const branchNodes = conditionResult ? node.trueBranch : node.falseBranch;
+        const branchName = conditionResult ? 'true' : 'false';
+
+        // Execute the appropriate branch
+        const branchResults = [];
+        for (const nodeId of branchNodes) {
+            const branchNode = this.workflowEngine.getNodeById(nodeId);
+            if (!branchNode) {
+                throw new Error(`Branch node not found: ${nodeId} (condition: ${node.id})`);
+            }
+
+            try {
+                const branchResult = await this.execute(branchNode, context);
+                branchResults.push({ 
+                    nodeId, 
+                    nodeName: branchNode.name,
+                    status: 'success',
+                    result: branchResult 
+                });
+            } catch (error) {
+                branchResults.push({
+                    nodeId,
+                    nodeName: branchNode.name,
+                    status: 'failed',
+                    error: error instanceof Error ? error.message : String(error)
+                });
+                throw error; // Re-throw to fail the condition node
+            }
+        }
+
         return {
             condition: node.condition,
-            result: Boolean(result),
-            branch: result ? 'true' : 'false',
+            result: Boolean(conditionResult),
+            branch: branchName,
+            branchNodesExecuted: branchNodes.length,
+            branchResults
         };
     }
 
     /**
-     * Execute loop node
+     * Execute loop node - COMPLETE IMPLEMENTATION
      */
     private async executeLoop(
         node: LoopNodeConfig,
         context: WorkflowContext
     ): Promise<any> {
+        if (!this.workflowEngine) {
+            throw new Error(`Workflow engine not initialized for loop node ${node.id}`);
+        }
+
         // Get iteration data
         const iterationData = this.resolveContextPath(node.iterationSource, context);
         
         if (!Array.isArray(iterationData)) {
-            throw new Error(`Loop iteration source must be an array: ${node.iterationSource}`);
+            throw new Error(`Loop iteration source must be an array: ${node.iterationSource} (node: ${node.id})`);
         }
 
         const maxIterations = node.maxIterations || iterationData.length;
         const iterations = Math.min(iterationData.length, maxIterations);
         const results: any[] = [];
 
+        // Execute child nodes for each iteration
         for (let i = 0; i < iterations; i++) {
-            const iterationContext = {
-                ...context,
-                data: {
-                    ...context.data,
-                    $iteration: i,
-                    $item: iterationData[i],
-                },
-            };
+            // Create isolated context for this iteration
+            const iterationContext = this.cloneContext(context);
+            iterationContext.data.$iteration = i;
+            iterationContext.data.$item = iterationData[i];
+            iterationContext.data.$index = i;
+            iterationContext.data.$total = iterations;
 
-            // Note: Child nodes would be executed by the workflow engine
-            // This just tracks the iteration
+            const iterationResults: any[] = [];
+
+            // Execute all child nodes in this iteration
+            for (const childNodeId of node.childNodes) {
+                const childNode = this.workflowEngine.getNodeById(childNodeId);
+                if (!childNode) {
+                    throw new Error(`Loop child node not found: ${childNodeId} (loop: ${node.id})`);
+                }
+
+                try {
+                    const childResult = await this.execute(childNode, iterationContext);
+                    iterationResults.push({
+                        nodeId: childNodeId,
+                        nodeName: childNode.name,
+                        status: 'success',
+                        result: childResult
+                    });
+                } catch (error) {
+                    iterationResults.push({
+                        nodeId: childNodeId,
+                        nodeName: childNode.name,
+                        status: 'failed',
+                        error: error instanceof Error ? error.message : String(error)
+                    });
+                    // Continue with next iteration even if one fails
+                }
+            }
+
             results.push({
                 iteration: i,
                 item: iterationData[i],
+                childNodesExecuted: node.childNodes.length,
+                childResults: iterationResults
             });
         }
 
         return {
-            iterations: results.length,
-            results,
+            totalIterations: iterations,
+            maxIterations: node.maxIterations,
+            childNodesPerIteration: node.childNodes.length,
+            results
         };
     }
 
@@ -176,11 +304,11 @@ export class NodeExecutor {
         } else if (node.modelTags) {
             model = await this.modelManager.selectModelByTags(node.modelTags);
         } else {
-            throw new Error('Model node must specify modelId or modelTags');
+            throw new Error(`Model node ${node.id} must specify modelId or modelTags`);
         }
 
         if (!model) {
-            throw new Error('No suitable model found');
+            throw new Error(`No suitable model found for node ${node.id}`);
         }
 
         // Map inputs from context
@@ -214,7 +342,7 @@ export class NodeExecutor {
             case 'github':
                 return this.downloadFromGitHub(node.resourceId, node.destination);
             default:
-                throw new Error(`Unknown download source: ${node.source}`);
+                throw new Error(`Unknown download source: ${node.source} (node: ${node.id})`);
         }
     }
 
@@ -239,7 +367,7 @@ export class NodeExecutor {
                 output = await this.executeShell(node.script, inputs);
                 break;
             default:
-                throw new Error(`Unknown script language: ${node.language}`);
+                throw new Error(`Unknown script language: ${node.language} (node: ${node.id})`);
         }
 
         // Map outputs
@@ -284,7 +412,7 @@ export class NodeExecutor {
         });
 
         if (!response.ok) {
-            throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+            throw new Error(`API call failed (node: ${node.id}): ${response.status} ${response.statusText}`);
         }
 
         const result = await response.json();
@@ -307,7 +435,7 @@ export class NodeExecutor {
         context: WorkflowContext
     ): Promise<any> {
         if (!this.octokit) {
-            throw new Error('GitHub token not configured');
+            throw new Error(`GitHub token not configured (node: ${node.id})`);
         }
 
         // Trigger workflow
@@ -344,7 +472,7 @@ export class NodeExecutor {
         }
 
         if (!runId) {
-            throw new Error('Could not find workflow run');
+            throw new Error(`Could not find workflow run (node: ${node.id})`);
         }
 
         // Poll for completion
@@ -408,12 +536,12 @@ export class NodeExecutor {
                         stderr: stderr.trim(),
                     });
                 } else {
-                    reject(new Error(`Command failed with exit code ${code}: ${stderr}`));
+                    reject(new Error(`Command failed (node: ${node.id}) with exit code ${code}: ${stderr}`));
                 }
             });
 
             process.on('error', (error) => {
-                reject(error);
+                reject(new Error(`Command error (node: ${node.id}): ${error.message}`));
             });
         });
     }
@@ -468,11 +596,11 @@ export class NodeExecutor {
         context: WorkflowContext
     ): Promise<any> {
         if (!this.workflowEngine) {
-            throw new Error('Workflow engine not initialized for nested workflow execution');
+            throw new Error(`Workflow engine not initialized for nested workflow node ${node.id}`);
         }
 
         if (!this.storageManager) {
-            throw new Error('Storage manager not initialized for nested workflow execution');
+            throw new Error(`Storage manager not initialized for nested workflow node ${node.id}`);
         }
 
         try {
@@ -480,11 +608,11 @@ export class NodeExecutor {
             const nestedWorkflow = await this.storageManager.loadWorkflowById(node.workflowId);
             
             if (!nestedWorkflow) {
-                throw new Error(`Nested workflow not found: ${node.workflowId}`);
+                throw new Error(`Nested workflow not found: ${node.workflowId} (node: ${node.id})`);
             }
 
             // Prepare nested context with input mapping
-            const nestedContext: Record<string, any> = {};
+            let nestedContext: Record<string, any> = {};
             
             if (node.inputMapping) {
                 for (const [key, contextPath] of Object.entries(node.inputMapping)) {
@@ -504,7 +632,7 @@ export class NodeExecutor {
 
             // Check execution status
             if (result.status === 'failed') {
-                throw new Error(`Nested workflow "${nestedWorkflow.name}" failed`);
+                throw new Error(`Nested workflow "${nestedWorkflow.name}" failed (node: ${node.id})`);
             }
 
             // Map outputs back to parent context
@@ -529,20 +657,20 @@ export class NodeExecutor {
             };
         } catch (error) {
             throw new Error(
-                `Nested workflow execution failed: ${error instanceof Error ? error.message : String(error)}`
+                `Nested workflow execution failed (node: ${node.id}): ${error instanceof Error ? error.message : String(error)}`
             );
         }
     }
 
     /**
-     * Execute parallel node - FULLY IMPLEMENTED
+     * Execute parallel node - FULLY IMPLEMENTED WITH CONTEXT ISOLATION
      */
     private async executeParallel(
         node: ParallelNodeConfig,
         context: WorkflowContext
     ): Promise<any> {
         if (!this.workflowEngine) {
-            throw new Error('Workflow engine not initialized for parallel execution');
+            throw new Error(`Workflow engine not initialized for parallel node ${node.id}`);
         }
 
         try {
@@ -550,15 +678,18 @@ export class NodeExecutor {
             const childNodes = node.childNodes.map(nodeId => {
                 const childNode = this.workflowEngine.getNodeById(nodeId);
                 if (!childNode) {
-                    throw new Error(`Child node not found: ${nodeId}`);
+                    throw new Error(`Child node not found: ${nodeId} (parallel: ${node.id})`);
                 }
                 return childNode;
             });
 
-            // Execute all child nodes in parallel
+            // Execute all child nodes in parallel with ISOLATED CONTEXTS
             const childPromises = childNodes.map(async (childNode) => {
+                // Clone context for each parallel branch to prevent race conditions
+                const isolatedContext = this.cloneContext(context);
+                
                 try {
-                    const result = await this.execute(childNode, context);
+                    const result = await this.execute(childNode, isolatedContext);
                     return {
                         nodeId: childNode.id,
                         nodeName: childNode.name,
@@ -597,8 +728,13 @@ export class NodeExecutor {
                 });
             } else {
                 // Wait for first to complete successfully
-                const firstResult = await Promise.race(childPromises);
-                results = [firstResult];
+                try {
+                    const firstResult = await Promise.race(childPromises);
+                    results = [firstResult];
+                } catch (error) {
+                    // All parallel nodes failed
+                    throw new Error(`All parallel nodes failed (node: ${node.id})`);
+                }
             }
 
             // Calculate statistics
@@ -615,7 +751,7 @@ export class NodeExecutor {
             };
         } catch (error) {
             throw new Error(
-                `Parallel execution failed: ${error instanceof Error ? error.message : String(error)}`
+                `Parallel execution failed (node: ${node.id}): ${error instanceof Error ? error.message : String(error)}`
             );
         }
     }
@@ -629,7 +765,7 @@ export class NodeExecutor {
     ): Promise<any> {
         const customNode = this.extensionManager.getCustomNode(node.type);
         if (!customNode) {
-            throw new Error(`Custom node type not found: ${node.type}`);
+            throw new Error(`Custom node type not found: ${node.type} (node: ${node.id})`);
         }
 
         return customNode.executor(node, context);
@@ -651,7 +787,7 @@ export class NodeExecutor {
             const fn = new Function('ctx', `with(ctx) { return ${expression}; }`);
             return fn(evalContext);
         } catch (error) {
-            throw new Error(`Failed to evaluate expression: ${expression}`);
+            throw new Error(`Failed to evaluate expression: ${expression} - ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -723,7 +859,7 @@ export class NodeExecutor {
             const fn = new Function('inputs', 'context', script);
             return fn(inputs, context);
         } catch (error) {
-            throw new Error(`JavaScript execution failed: ${error}`);
+            throw new Error(`JavaScript execution failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
