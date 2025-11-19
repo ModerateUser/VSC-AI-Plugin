@@ -4,6 +4,32 @@
   "description": "Visual node-based workflow engine for VS Code with AI model management, automation, and vector database support",
   "version": "0.2.0",
   "publisher": "ModerateUser",
+  "author": {
+    "name": "ModerateUser",
+    "url": "https://github.com/ModerateUser"
+  },
+  "license": "MIT",
+  "icon": "resources/workflow-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ModerateUser/VSC-AI-Plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ModerateUser/VSC-AI-Plugin/issues"
+  },
+  "homepage": "https://github.com/ModerateUser/VSC-AI-Plugin#readme",
+  "keywords": [
+    "workflow",
+    "automation",
+    "ai",
+    "machine-learning",
+    "visual-programming",
+    "node-based",
+    "huggingface",
+    "vector-database",
+    "github-actions",
+    "agentic"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
